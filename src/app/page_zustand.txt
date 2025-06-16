@@ -18,212 +18,8 @@ import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 import { useCepQuery, usePrefetchCep } from "./hooks/useCepQuery";
 import { useContactMutations } from "./hooks/useContactMutations";
+import { useContactStore, useSessionStore } from "./store/contactStore";
 import { contactSchema } from "./utils/schemas/contact.schema";
-
-class ContactDB {
-	private readonly dbName = "ContactsDatabase";
-	private readonly version = 1;
-	private db: IDBDatabase | null = null;
-
-	async init(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const request = indexedDB.open(this.dbName, this.version);
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => {
-				this.db = request.result;
-				resolve();
-			};
-
-			request.onupgradeneeded = (event) => {
-				const db = (event.target as IDBOpenDBRequest).result;
-
-				if (!db.objectStoreNames.contains("contacts")) {
-					const contactStore = db.createObjectStore("contacts", { keyPath: "id" });
-					contactStore.createIndex("userName", "userName", { unique: false });
-					contactStore.createIndex("displayName", "displayName", { unique: false });
-					contactStore.createIndex("city", "city", { unique: false });
-					contactStore.createIndex("state", "state", { unique: false });
-				}
-
-				if (!db.objectStoreNames.contains("recentAddresses")) {
-					db.createObjectStore("recentAddresses", { keyPath: "id", autoIncrement: true });
-				}
-
-				if (!db.objectStoreNames.contains("filters")) {
-					db.createObjectStore("filters", { keyPath: "key" });
-				}
-
-				if (!db.objectStoreNames.contains("session")) {
-					db.createObjectStore("session", { keyPath: "key" });
-				}
-			};
-		});
-	}
-
-	async getAllContacts(): Promise<ContactInterface[]> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["contacts"], "readonly");
-			const store = transaction.objectStore("contacts");
-			const request = store.getAll();
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result || []);
-		});
-	}
-
-	async addContact(contact: ContactInterface): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["contacts"], "readwrite");
-			const store = transaction.objectStore("contacts");
-			const request = store.add(contact);
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-
-	async updateContact(contactId: string, updatedData: Partial<ContactInterface>): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["contacts"], "readwrite");
-			const store = transaction.objectStore("contacts");
-
-			const getRequest = store.get(contactId);
-			getRequest.onsuccess = () => {
-				const contact = getRequest.result;
-				if (contact) {
-					const updatedContact = { ...contact, ...updatedData };
-					const putRequest = store.put(updatedContact);
-					putRequest.onerror = () => reject(putRequest.error);
-					putRequest.onsuccess = () => resolve();
-				} else {
-					reject(new Error("Contact not found"));
-				}
-			};
-			getRequest.onerror = () => reject(getRequest.error);
-		});
-	}
-
-	async deleteContact(contactId: string): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["contacts"], "readwrite");
-			const store = transaction.objectStore("contacts");
-			const request = store.delete(contactId);
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-
-	async getRecentAddresses(): Promise<any[]> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["recentAddresses"], "readonly");
-			const store = transaction.objectStore("recentAddresses");
-			const request = store.getAll();
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result || []);
-		});
-	}
-
-	async addRecentAddress(address: any): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["recentAddresses"], "readwrite");
-			const store = transaction.objectStore("recentAddresses");
-			const request = store.add(address);
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-
-	async clearRecentAddresses(): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["recentAddresses"], "readwrite");
-			const store = transaction.objectStore("recentAddresses");
-			const request = store.clear();
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-
-	async getFilters(): Promise<any> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["filters"], "readonly");
-			const store = transaction.objectStore("filters");
-			const request = store.get("currentFilters");
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () =>
-				resolve(
-					request.result?.value || {
-						displayName: "",
-						city: "",
-						state: "",
-						street: "",
-						neighborhood: "",
-						cep: "",
-					},
-				);
-		});
-	}
-
-	async saveFilters(filters: any): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["filters"], "readwrite");
-			const store = transaction.objectStore("filters");
-			const request = store.put({ key: "currentFilters", value: filters });
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-
-	async getCurrentPage(): Promise<number> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["session"], "readonly");
-			const store = transaction.objectStore("session");
-			const request = store.get("currentPage");
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result?.value || 1);
-		});
-	}
-
-	async saveCurrentPage(page: number): Promise<void> {
-		if (!this.db) await this.init();
-
-		return new Promise((resolve, reject) => {
-			const transaction = this.db!.transaction(["session"], "readwrite");
-			const store = transaction.objectStore("session");
-			const request = store.put({ key: "currentPage", value: page });
-
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
-		});
-	}
-}
 
 interface ContactInterface {
 	id: string;
@@ -239,22 +35,13 @@ interface ContactInterface {
 export default function HomePage() {
 	const queryClient = useQueryClient();
 	const { prefetchCep } = usePrefetchCep();
-	const contactDB = useMemo(() => new ContactDB(), []);
 
-	const [contacts, setContacts] = useState<ContactInterface[]>([]);
-	const [filters, setFiltersState] = useState({
-		displayName: "",
-		city: "",
-		state: "",
-		street: "",
-		neighborhood: "",
-		cep: "",
-	});
-	const [currentPage, setCurrentPageState] = useState(1);
-	const [recentAddresses, setRecentAddresses] = useState<any[]>([]);
+	const { contacts, filters, currentPage, setFilters, setCurrentPage, clearFilters } = useContactStore();
+
+	const { recentAddresses } = useSessionStore();
 
 	const {
-		createContact: createContactMutation,
+		createContact,
 		updateContact: updateContactMutation,
 		deleteContact: deleteContactMutation,
 		isCreating,
@@ -318,83 +105,6 @@ export default function HomePage() {
 		isError: boolean;
 	};
 
-	useEffect(() => {
-		const loadData = async () => {
-			try {
-				await contactDB.init();
-				const [loadedContacts, loadedFilters, loadedPage, loadedAddresses] = await Promise.all([
-					contactDB.getAllContacts(),
-					contactDB.getFilters(),
-					contactDB.getCurrentPage(),
-					contactDB.getRecentAddresses(),
-				]);
-
-				setContacts(loadedContacts);
-				setFiltersState(loadedFilters);
-				setCurrentPageState(loadedPage);
-				setRecentAddresses(loadedAddresses);
-			} catch (error) {
-				console.error("Error loading data from IndexedDB:", error);
-			}
-		};
-
-		loadData();
-	}, [contactDB]);
-
-	const setFilters = async (newFilters: Partial<typeof filters>) => {
-		const updatedFilters = { ...filters, ...newFilters };
-		setFiltersState(updatedFilters);
-		await contactDB.saveFilters(updatedFilters);
-	};
-
-	const setCurrentPage = async (page: number) => {
-		setCurrentPageState(page);
-		await contactDB.saveCurrentPage(page);
-	};
-
-	const clearFilters = async () => {
-		const emptyFilters = {
-			displayName: "",
-			city: "",
-			state: "",
-			street: "",
-			neighborhood: "",
-			cep: "",
-		};
-		setFiltersState(emptyFilters);
-		await contactDB.saveFilters(emptyFilters);
-		setCurrentPage(1);
-	};
-
-	const addContact = async (contact: ContactInterface) => {
-		await contactDB.addContact(contact);
-		const updatedContacts = await contactDB.getAllContacts();
-		setContacts(updatedContacts);
-	};
-
-	const updateContact = async (contactId: string, updatedData: Partial<ContactInterface>) => {
-		await contactDB.updateContact(contactId, updatedData);
-		const updatedContacts = await contactDB.getAllContacts();
-		setContacts(updatedContacts);
-	};
-
-	const deleteContact = async (contactId: string) => {
-		await contactDB.deleteContact(contactId);
-		const updatedContacts = await contactDB.getAllContacts();
-		setContacts(updatedContacts);
-	};
-
-	const addRecentAddress = async (address: any) => {
-		const current = await contactDB.getRecentAddresses();
-		if (current.length >= 10) {
-			await contactDB.clearRecentAddresses();
-		}
-
-		await contactDB.addRecentAddress(address);
-		const updatedAddresses = await contactDB.getRecentAddresses();
-		setRecentAddresses(updatedAddresses);
-	};
-
 	const filteredContacts = useMemo(() => {
 		return contacts.filter(
 			(contact) =>
@@ -441,7 +151,6 @@ export default function HomePage() {
 			}
 
 			const contactData = {
-				id: Date.now().toString(),
 				...validatedData,
 				street: (cepData as { street: string }).street,
 				neighborhood: (cepData as { neighborhood: string }).neighborhood,
@@ -450,14 +159,7 @@ export default function HomePage() {
 				cep: String((cepData as { cep: string | number }).cep),
 			};
 
-			await addContact(contactData);
-
-			await addRecentAddress({
-				cep: contactData.cep,
-				city: contactData.city,
-				state: contactData.state,
-				timestamp: Date.now(),
-			});
+			createContact(contactData);
 
 			setForm({ userName: "", displayName: "", cep: "" });
 
@@ -499,17 +201,13 @@ export default function HomePage() {
 					updateData.neighborhood = editCepData.neighborhood;
 					updateData.city = editCepData.city;
 					updateData.state = editCepData.state;
-
-					await addRecentAddress({
-						cep: editContactForm.cep,
-						city: editCepData.city,
-						state: editCepData.state,
-						timestamp: Date.now(),
-					});
 				}
 			}
 
-			await updateContact(editingContact.id, updateData);
+			updateContactMutation({
+				contactId: editingContact.id,
+				updatedData: updateData,
+			});
 
 			setIsEditModalOpen(false);
 			setEditContactForm({ userName: "", displayName: "", cep: "" });
@@ -521,7 +219,7 @@ export default function HomePage() {
 	const handleDeleteContact = async () => {
 		if (!contactToDelete) return;
 
-		await deleteContact(contactToDelete.id);
+		deleteContactMutation(contactToDelete.id);
 		setIsDeleteModalOpen(false);
 	};
 
@@ -605,21 +303,15 @@ export default function HomePage() {
 							{isCepLoading && <Loader2 className="h-4 w-4 animate-spin absolute right-3 top-3" />}
 						</div>
 
-						{(() => {
-							if (cepData && typeof cepData === "object" && cepData !== null && "street" in cepData) {
-								const data = cepData as CepData;
-								return (
-									<CardContent className="border-gray-200 border shadow px-3 py-3 dark:border-gray-200">
-										<p>Street: {data.street.replace("Rua ", "")}</p>
-										<p>Neighborhood: {data.neighborhood}</p>
-										<p>City: {data.city}</p>
-										<p>State: {data.state}</p>
-										<p>CEP: {data.cep}</p>
-									</CardContent>
-								);
-							}
-							return null;
-						})()}
+						{cepData && (
+							<CardContent className="border-gray-200 border shadow px-3 py-3 dark:border-gray-200">
+								<p>Street: {(cepData as CepData).street.replace("Rua ", "")}</p>
+								<p>Neighborhood: {(cepData as CepData).neighborhood}</p>
+								<p>City: {(cepData as CepData).city}</p>
+								<p>State: {(cepData as CepData).state}</p>
+								<p>CEP: {(cepData as CepData).cep}</p>
+							</CardContent>
+						)}
 
 						{recentAddresses.length > 0 && (
 							<div className="mt-4">
