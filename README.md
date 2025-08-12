@@ -2,8 +2,6 @@
     <h1 align="center"><a href="https://contacts.alexgalhardo.com" target="_blank">contacts.alexgalhardo.com</a></h1>
 </div>
 
-<https://github.com/user-attachments/assets/9e3ac476-eddd-4b78-9acf-df15fd8bde39>
-
 ## Technologies
 
 - [NextJS v15](https://nextjs.org/)
